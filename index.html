@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <title>Krypto AI – Predykcja ML</title>
+  <link rel="manifest" href="manifest.json">
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js');
+      });
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
+  <style>
+    body { font-family: sans-serif; background: #f4f4f4; text-align: center; padding: 2em; }
+    input, select, button { padding: 0.5em; margin: 0.5em; font-size: 1em; }
+    #chart { width: 90%; height: 400px; margin: 1em auto; }
+    table { margin: auto; width: 90%; border-collapse: collapse; }
+    th, td { border: 1px solid #ccc; padding: 6px; }
+  </style>
+</head>
+<body>
+  <h1>📈 Krypto AI – Predykcja ML</h1>
+  <p>Podaj nazwę coina (np. BTC) — zawsze względem USDC</p>
+  <input id="base" placeholder="BTC, ETH..." value="BTC">
+  <select id="interval">
+    <option value="15m">15 minut</option>
+    <option value="30m">30 minut</option>
+    <option value="1h" selected>1 godzina</option>
+    <option value="1d">1 dzień</option>
+  </select>
+  <button onclick="load()">🔮 Pokaż dane</button>
+  <div id="chart"></div>
+  <div id="predictionResult"></div>
+
+  <script>
+    const intervalMap = { "15m": 15, "30m": 30, "1h": 60, "1d": 1440 };
+
+    async function trainAndPredict(prices, windowSize = 10) {
+      const close = prices.map(p => p.close);
+      const xs = [], ys = [];
+
+      for (let i = 0; i < close.length - windowSize; i++) {
+        xs.push(close.slice(i, i + windowSize));
+        ys.push(close[i + windowSize]);
+      }
+
+      const inputTensor = tf.tensor2d(xs);
+      const labelTensor = tf.tensor1d(ys);
+
+      const model = tf.sequential();
+      model.add(tf.layers.dense({ inputShape: [windowSize], units: 32, activation: 'relu' }));
+      model.add(tf.layers.dense({ units: 1 }));
+      model.compile({ loss: 'meanSquaredError', optimizer: 'adam' });
+
+      await model.fit(inputTensor, labelTensor, { epochs: 30, verbose: 0 });
+
+      const lastInput = close.slice(-windowSize);
+      const prediction = model.predict(tf.tensor2d([lastInput]));
+      const predictedValue = (await prediction.data())[0];
+
+      return predictedValue;
+    }
+
+    async function load() {
+      const base = document.getElementById('base').value.toUpperCase();
+      const interval = document.getElementById('interval').value;
+      const symbol = base + "USDC";
+
+      const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=100`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        alert("Nie udało się pobrać danych z Binance.");
+        return;
+      }
+
+      const raw = await res.json();
+      const data = raw.map(d => ({
+        time: d[0] / 1000,
+        open: +d[1],
+        high: +d[2],
+        low: +d[3],
+        close: +d[4]
+      }));
+
+      const chart = LightweightCharts.createChart(document.getElementById("chart"), {
+        width: 800,
+        height: 400
+      });
+      const series = chart.addLineSeries();
+      series.setData(data.map(d => ({ time: d.time, value: d.close })));
+
+      const pred = await trainAndPredict(data);
+      const last = data[data.length - 1].close;
+      const diff = ((pred - last) / last * 100).toFixed(2);
+      const decision = diff > 1 ? "💹 Kupuj" : diff < -1 ? "⚠️ Sprzedaj" : "⏸ Wstrzymaj się";
+
+      document.getElementById("predictionResult").innerHTML = `
+        <h3>🤖 Predykcja AI</h3>
+        <p>Aktualna cena: <b>${last.toFixed(4)}</b></p>
+        <p>Przewidywana cena: <b>${pred.toFixed(4)}</b></p>
+        <p>Zmiana: <b>${diff}%</b></p>
+        <p>Rekomendacja: <b>${decision}</b></p>
+      `;
+    }
+  </script>
+</body>
+</html>
